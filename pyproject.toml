@@ -13,12 +13,6 @@ dependencies = [
     "rpyc>=6.0.2",
 ]
 
-[project.optional-dependencies]
-dev = [
-    "pytest>=8.4.1",
-    "numpy>=1.24.0",
-]
-
 [tool.hatch.build.targets.wheel]
 packages = ["rpyc_import_bridge"]
 
@@ -30,5 +24,6 @@ python_functions = ["test_*"]
 
 [dependency-groups]
 dev = [
+    "numpy>=2.3.2",
     "pytest>=8.4.1",
 ]

@@ -24,11 +24,14 @@ import sample_module
 print(f"imported sample_module: {sample_module}")
 
 # try doing stuff
+print(f"dir(sample_module): {dir(sample_module)}")
 from sample_module import simple_function
 
 print(f"simple_function: {simple_function}")
 
-assert simple_function(3) == 6, "simple_function failed"
+val = simple_function(3)
+assert val == 6, "simple_function failed"
+print(f"simple_function passed: {val}")
 
 # try importing numpy
 import numpy
