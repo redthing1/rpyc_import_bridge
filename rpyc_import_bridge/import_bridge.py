@@ -53,9 +53,6 @@ class RPyCImportBridge:
         self.import_finder = RemoteImportFinder(self)
         sys.meta_path.insert(0, self.import_finder)
 
-        # create parent modules in sys.modules if needed
-        self._ensure_parent_modules()
-
         self._installed = True
         if DEBUG:
             log(f"installed import hooks for {len(self.registered_modules)} modules")
@@ -73,19 +70,6 @@ class RPyCImportBridge:
         self._installed = False
         if DEBUG:
             log("uninstalled import hooks")
-
-    def _ensure_parent_modules(self) -> None:
-        """Create parent module objects in sys.modules if needed."""
-        import types
-
-        for module_name in self.registered_modules:
-            if module_name not in sys.modules:
-                parent_module = types.ModuleType(module_name)
-                parent_module.__path__ = []  # mark as package
-                parent_module.__package__ = module_name
-                sys.modules[module_name] = parent_module
-                if DEBUG:
-                    log(f"created parent module: {module_name}")
 
     def verify_connection(self) -> bool:
         """Verify that the RPyC connection is still active.
@@ -132,13 +116,32 @@ class RemoteImportFinder:
         """
         # extract root module name
         parts = fullname.split(".")
-        if len(parts) < 2:
-            return None
-
         root_module = parts[0]
 
         # only handle registered modules
         if root_module not in self.bridge.registered_modules:
+            return None
+
+        # handle root module import (e.g., "sample_module")
+        if len(parts) == 1:
+            try:
+                # check if remote module exists
+                remote_module = getattr(self.bridge.connection.root, root_module, None)
+                if remote_module is None:
+                    return None
+
+                # create loader for root module
+                loader = RemoteImportLoader(self.bridge, remote_module, fullname)
+                spec = importlib.machinery.ModuleSpec(fullname, loader)
+                return spec
+
+            except Exception as e:
+                if DEBUG:
+                    log(f"root import finder failed for {fullname}: {e}")
+                return None
+
+        # handle submodule import (e.g., "sample_module.something")
+        if len(parts) < 2:
             return None
 
         submodule_name = parts[1]
@@ -153,7 +156,7 @@ class RemoteImportFinder:
             if remote_module is None:
                 return None
 
-            # verify it's module-like
+            # verify it's module-like (has attributes we can proxy)
             if not hasattr(remote_module, "__dict__"):
                 if DEBUG:
                     log(f"remote object {fullname} is not module-like")
