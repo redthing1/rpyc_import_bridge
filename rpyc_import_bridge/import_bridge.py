@@ -154,7 +154,40 @@ class RemoteImportFinder:
 
             remote_module = getattr(root_remote, submodule_name, None)
             if remote_module is None:
-                return None
+                # check if root_remote is a package (has __path__)
+                # if so, try to import the submodule on the remote side
+                if hasattr(root_remote, "__path__"):
+                    try:
+                        # try to import the submodule remotely
+                        if hasattr(self.bridge.connection.root, 'import_module'):
+                            # use the helper method if available
+                            self.bridge.connection.root.import_module(fullname)
+                        else:
+                            # no import helper available - this is a configuration error
+                            error_msg = (
+                                f"cannot import submodule {fullname}: "
+                                f"server does not expose 'import_module' method. "
+                                f"add 'def exposed_import_module(self, module_name): "
+                                f"import importlib; return importlib.import_module(module_name)' "
+                                f"to your rpyc service"
+                            )
+                            if DEBUG:
+                                log(error_msg)
+                            raise ImportError(error_msg)
+                        
+                        # now try to get the submodule attribute again
+                        remote_module = getattr(root_remote, submodule_name, None)
+                        if remote_module is None:
+                            if DEBUG:
+                                log(f"submodule {fullname} still not available after remote import")
+                            return None
+                    except Exception as e:
+                        if DEBUG:
+                            log(f"failed to import submodule {fullname} remotely: {e}")
+                        return None
+                else:
+                    # not a package, can't have submodules
+                    return None
 
             # verify it's module-like (has attributes we can proxy)
             if not hasattr(remote_module, "__dict__"):

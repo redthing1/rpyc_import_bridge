@@ -29,6 +29,16 @@ class TestService(rpyc.Service):
         if HAS_NUMPY:
             return numpy
         raise ImportError("numpy not available")
+    
+    @property
+    def exposed_test_package(self):
+        import test_package
+        return test_package
+    
+    def exposed_import_module(self, module_name):
+        """Import a module on the server side and return it."""
+        import importlib
+        return importlib.import_module(module_name)
 
 
 class TestServer:
