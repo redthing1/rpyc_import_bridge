@@ -15,5 +15,5 @@ bridge.install_import_hooks()
 
 # imports now work naturally
 from numpy import array
-from mymodule.function import Function
+from mymodule.things import Function
 ```
