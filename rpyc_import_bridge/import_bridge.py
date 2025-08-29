@@ -128,17 +128,27 @@ class RemoteImportFinder:
                 # check if remote module exists
                 remote_module = getattr(self.bridge.connection.root, root_module, None)
                 if remote_module is None:
-                    return None
+                    error_msg = (
+                        f"module {root_module} is registered but not available on server. "
+                        f"add 'def exposed_{root_module}(self): import {root_module}; return {root_module}' "
+                        f"to your rpyc service"
+                    )
+                    raise ImportError(error_msg)
 
                 # create loader for root module
                 loader = RemoteImportLoader(self.bridge, remote_module, fullname)
                 spec = importlib.machinery.ModuleSpec(fullname, loader)
                 return spec
 
+            except ImportError:
+                # re-raise import errors as they contain useful messages
+                raise
             except Exception as e:
+                # unexpected errors should be loud
+                error_msg = f"unexpected error importing {fullname}: {e}"
                 if DEBUG:
-                    log(f"root import finder failed for {fullname}: {e}")
-                return None
+                    log(error_msg)
+                raise ImportError(error_msg) from e
 
         # handle submodule import (e.g., "sample_module.something")
         if len(parts) < 2:
@@ -178,13 +188,21 @@ class RemoteImportFinder:
                         # now try to get the submodule attribute again
                         remote_module = getattr(root_remote, submodule_name, None)
                         if remote_module is None:
-                            if DEBUG:
-                                log(f"submodule {fullname} still not available after remote import")
-                            return None
+                            error_msg = (
+                                f"submodule {fullname} imported successfully on remote side "
+                                f"but is not available as an attribute of {root_module}. "
+                                f"this indicates a problem with the remote module structure"
+                            )
+                            raise ImportError(error_msg)
+                    except ImportError:
+                        # re-raise import errors as they contain useful messages
+                        raise
                     except Exception as e:
+                        # unexpected errors during remote import should be loud
+                        error_msg = f"unexpected error importing submodule {fullname} remotely: {e}"
                         if DEBUG:
-                            log(f"failed to import submodule {fullname} remotely: {e}")
-                        return None
+                            log(error_msg)
+                        raise ImportError(error_msg) from e
                 else:
                     # not a package, can't have submodules
                     return None
@@ -201,10 +219,15 @@ class RemoteImportFinder:
 
             return spec
 
+        except ImportError:
+            # re-raise import errors as they contain useful messages
+            raise
         except Exception as e:
+            # unexpected errors should be loud
+            error_msg = f"unexpected error in import finder for {fullname}: {e}"
             if DEBUG:
-                log(f"import finder failed for {fullname}: {e}")
-            return None
+                log(error_msg)
+            raise ImportError(error_msg) from e
 
 
 class RemoteImportLoader(Loader):
