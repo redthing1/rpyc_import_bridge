@@ -17,3 +17,10 @@ bridge.install_import_hooks()
 from numpy import array
 from mymodule.things import Function
 ```
+
+## testing
+
+```sh
+uv run python ./test/server/test_server.py
+uv run python ./test/client/test_suite.py
+```
