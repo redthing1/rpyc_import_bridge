@@ -42,7 +42,10 @@ def main():
     bridge = RPyCImportBridge(c)
     bridge.register_remote_module("sample_module")
     bridge.register_remote_module("test_package")
-    # Note: Not registering numpy to avoid errors when it's not available
+    bridge.register_remote_module("advanced_classes")
+    bridge.register_remote_module("data_types")
+    bridge.register_remote_module("nested_package")
+    bridge.register_remote_module("numpy")
     bridge.install_import_hooks()
     print("✓ Bridge initialized\n")
     
@@ -158,6 +161,136 @@ def main():
     test("Repeated imports return same object", test_repeated_imports)
     test("Mixed import styles work", test_mixed_import_styles)
     test("Module has correct attributes", test_module_attributes)
+    
+    # ==========================================
+    print("\n4. Advanced Class Tests (advanced_classes):")
+    
+    def test_inheritance():
+        from advanced_classes import BaseClass, DerivedClass
+        base = BaseClass(5)
+        derived = DerivedClass(10, 20)
+        assert base.base_method() == "base: 5"
+        assert derived.base_method() == "derived: 10"
+        assert derived.derived_only_method() == "extra: 20"
+    
+    def test_class_methods():
+        from advanced_classes import BaseClass
+        obj = BaseClass.create_default()
+        assert obj.value == 42
+        assert BaseClass.static_helper(5) == 500
+    
+    def test_properties():
+        from advanced_classes import DerivedClass, PropertyClass
+        derived = DerivedClass(10, 5)
+        assert derived.computed_property == 15
+        # note: property setters blocked by rpyc security - this is expected
+        
+        prop_obj = PropertyClass()
+        assert prop_obj.read_only == 100
+        # read_write property getter works
+        initial_value = prop_obj.read_write
+        assert isinstance(initial_value, int)  # verify it's accessible
+    
+    def test_special_methods():
+        from advanced_classes import SpecialMethodsClass
+        obj = SpecialMethodsClass([1, 2, 3])
+        assert len(obj) == 3
+        assert obj[0] == 1
+        assert 2 in obj
+        obj[1] = 99
+        assert obj[1] == 99
+        count = obj(4)  # __call__
+        assert count == 4
+    
+    test("Class inheritance works", test_inheritance)
+    test("Class and static methods work", test_class_methods)
+    test("Properties work", test_properties)  
+    test("Special methods work", test_special_methods)
+    
+    # ==========================================
+    print("\n5. Data Types Tests (data_types):")
+    
+    def test_basic_data_types():
+        from data_types import SIMPLE_LIST, SIMPLE_DICT, SIMPLE_TUPLE
+        assert SIMPLE_LIST[3] == "hello"
+        assert SIMPLE_DICT["nested"]["inner"] == "value"
+        assert SIMPLE_TUPLE[1] == "two"
+    
+    def test_complex_structures():
+        from data_types import NESTED_STRUCTURE, DEFAULT_DICT, NAMED_TUPLE
+        deep_val = NESTED_STRUCTURE["level1"]["level2"]["level3"][2]["very"]
+        assert deep_val == "deep"
+        # remote lists compare by content, not identity
+        key1_list = DEFAULT_DICT["key1"]
+        assert len(key1_list) == 3
+        assert key1_list[0] == 1 and key1_list[1] == 2 and key1_list[2] == 3
+        assert NAMED_TUPLE.x == 10
+    
+    def test_dataclass():
+        from data_types import PERSON_INSTANCE, Person
+        assert PERSON_INSTANCE.name == "Alice"
+        assert "Alice" in PERSON_INSTANCE.greet()
+        new_person = Person("Bob", 25)
+        assert new_person.age == 25
+    
+    def test_data_functions():
+        from data_types import get_large_list, get_nested_dict
+        big_list = get_large_list(100)
+        assert len(big_list) == 100
+        assert big_list[50] == 50
+        nested = get_nested_dict(2)
+        assert nested["level"] == 2
+        assert nested["child"]["level"] == 1
+    
+    test("Basic data types work", test_basic_data_types)
+    test("Complex data structures work", test_complex_structures)
+    test("Dataclass instances work", test_dataclass)
+    test("Data-returning functions work", test_data_functions)
+    
+    # ==========================================
+    print("\n6. Nested Package Tests (nested_package):")
+    
+    def test_nested_imports():
+        from nested_package import top_level_func, TOP_LEVEL_VAR
+        from nested_package.sub import sub_func
+        from nested_package.sub.deep_module import deep_function, DeepClass
+        
+        assert top_level_func() == "top level"
+        assert TOP_LEVEL_VAR == "nested package root"
+        assert sub_func() == "sub package"
+        assert deep_function("test") == "deep: test"
+        
+        deep_obj = DeepClass("nested")
+        assert deep_obj.get_deep() == "very nested"
+    
+    test("Deep nested package imports work", test_nested_imports)
+    
+    # ==========================================
+    print("\n7. Real-World Package Tests (numpy):")
+    
+    def test_numpy_basic():
+        import numpy
+        import numpy as np
+        from numpy import array, zeros
+        
+        arr = np.array([1, 2, 3])
+        assert arr.shape == (3,)
+        assert arr[1] == 2
+        
+        zero_arr = zeros((2, 2))
+        assert zero_arr.shape == (2, 2)
+    
+    def test_numpy_submodules():
+        from numpy import linalg
+        from numpy.linalg import norm
+        import numpy as np
+        
+        vec = np.array([3, 4])
+        length = norm(vec)
+        assert abs(length - 5.0) < 0.01
+    
+    test("Numpy basic functionality", test_numpy_basic)
+    test("Numpy submodule imports", test_numpy_submodules)
     
     # ==========================================
     print(f"\n=== Test Results ===")

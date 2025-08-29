@@ -214,10 +214,25 @@ class RemoteProxyMetaclass(type):
     def __instancecheck__(cls, instance):
         """Custom isinstance check using type mapper."""
         if not hasattr(cls, "_type_mapper") or cls._type_mapper is None:
-            # Fallback to default isinstance
+            # fallback to default isinstance
             return super().__instancecheck__(instance)
 
         return cls._type_mapper.check_isinstance(instance, cls)
+    
+    def __getattr__(cls, name):
+        """Forward class-level attribute access to remote class."""
+        # avoid infinite recursion on special attributes
+        if name.startswith("__") and name.endswith("__"):
+            raise AttributeError(f"type object '{cls.__name__}' has no attribute '{name}'")
+        
+        # forward to remote class for class methods, static methods, etc.
+        if hasattr(cls, "_remote_class"):
+            try:
+                return getattr(cls._remote_class, name)
+            except Exception as e:
+                raise AttributeError(f"type object '{cls.__name__}' has no attribute '{name}'") from e
+        
+        raise AttributeError(f"type object '{cls.__name__}' has no attribute '{name}'")
 
 
 def is_remote_class(member: Any) -> bool:

@@ -150,74 +150,56 @@ class RemoteImportFinder:
                     log(error_msg)
                 raise ImportError(error_msg) from e
 
-        # handle submodule import (e.g., "sample_module.something")
+        # handle submodule import (e.g., "sample_module.something" or deeper)
         if len(parts) < 2:
             return None
 
-        submodule_name = parts[1]
+        # check if we have import helper - needed for deep imports
+        if not hasattr(self.bridge.connection.root, 'import_module'):
+            error_msg = (
+                f"cannot import submodule {fullname}: "
+                f"server does not expose 'import_module' method. "
+                f"add 'def exposed_import_module(self, module_name): "
+                f"import importlib; return importlib.import_module(module_name)' "
+                f"to your rpyc service"
+            )
+            raise ImportError(error_msg)
 
         try:
-            # check if remote module exists
-            root_remote = getattr(self.bridge.connection.root, root_module, None)
-            if root_remote is None:
-                return None
-
-            remote_module = getattr(root_remote, submodule_name, None)
-            if remote_module is None:
-                # check if root_remote is a package (has __path__)
-                # if so, try to import the submodule on the remote side
-                if hasattr(root_remote, "__path__"):
-                    try:
-                        # try to import the submodule remotely
-                        if hasattr(self.bridge.connection.root, 'import_module'):
-                            # use the helper method if available
-                            self.bridge.connection.root.import_module(fullname)
-                        else:
-                            # no import helper available - this is a configuration error
-                            error_msg = (
-                                f"cannot import submodule {fullname}: "
-                                f"server does not expose 'import_module' method. "
-                                f"add 'def exposed_import_module(self, module_name): "
-                                f"import importlib; return importlib.import_module(module_name)' "
-                                f"to your rpyc service"
-                            )
-                            if DEBUG:
-                                log(error_msg)
-                            raise ImportError(error_msg)
-                        
-                        # now try to get the submodule attribute again
-                        remote_module = getattr(root_remote, submodule_name, None)
-                        if remote_module is None:
-                            error_msg = (
-                                f"submodule {fullname} imported successfully on remote side "
-                                f"but is not available as an attribute of {root_module}. "
-                                f"this indicates a problem with the remote module structure"
-                            )
-                            raise ImportError(error_msg)
-                    except ImportError:
-                        # re-raise import errors as they contain useful messages
-                        raise
-                    except Exception as e:
-                        # unexpected errors during remote import should be loud
-                        error_msg = f"unexpected error importing submodule {fullname} remotely: {e}"
-                        if DEBUG:
-                            log(error_msg)
-                        raise ImportError(error_msg) from e
-                else:
-                    # not a package, can't have submodules
+            # first, try to import the full path on remote side to test if it's a real module
+            try:
+                remote_module = self.bridge.connection.root.import_module(fullname)
+                
+                # check if it's actually a module (has __file__ or __path__)
+                is_real_module = (
+                    hasattr(remote_module, "__file__") or 
+                    hasattr(remote_module, "__path__")
+                )
+                
+                if not is_real_module:
+                    # this is likely a function/class/variable, not a module
+                    # let python handle it via the parent module's __getattr__
+                    if DEBUG:
+                        log(f"{fullname} is not a real module (no __file__ or __path__)")
                     return None
-
-            # verify it's module-like (has attributes we can proxy)
-            if not hasattr(remote_module, "__dict__"):
+                
+                # it's a real module, create a loader for it
+                loader = RemoteImportLoader(self.bridge, remote_module, fullname)
+                spec = importlib.machinery.ModuleSpec(fullname, loader)
+                return spec
+                
+            except ImportError as import_err:
+                # the full path doesn't exist as a module on remote
+                # this is normal - it means the last part is likely an attribute
                 if DEBUG:
-                    log(f"remote object {fullname} is not module-like")
+                    log(f"remote import of {fullname} failed: {import_err}")
                 return None
-
-            # create loader for this module
-            loader = RemoteImportLoader(self.bridge, remote_module, fullname)
-            spec = importlib.machinery.ModuleSpec(fullname, loader)
-
-            return spec
+            except Exception as e:
+                # unexpected error during remote import
+                error_msg = f"unexpected error testing remote import of {fullname}: {e}"
+                if DEBUG:
+                    log(error_msg)
+                raise ImportError(error_msg) from e
 
         except ImportError:
             # re-raise import errors as they contain useful messages

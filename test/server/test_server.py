@@ -39,6 +39,21 @@ class TestService(rpyc.Service):
         """Import a module on the server side and return it."""
         import importlib
         return importlib.import_module(module_name)
+    
+    @property
+    def exposed_advanced_classes(self):
+        import advanced_classes
+        return advanced_classes
+    
+    @property 
+    def exposed_data_types(self):
+        import data_types
+        return data_types
+    
+    @property
+    def exposed_nested_package(self):
+        import nested_package
+        return nested_package
 
 
 class TestServer:
