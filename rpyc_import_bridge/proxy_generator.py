@@ -329,6 +329,13 @@ class RemoteProxyGenerator:
         # create new module
         proxy_module = types.ModuleType(module_name)
         proxy_module.__file__ = f"<proxy for {module_name}>"
+        
+        # check if remote module is a package (has __path__)
+        if hasattr(remote_module, "__path__"):
+            # mark proxy module as a package too
+            proxy_module.__path__ = []
+            if DEBUG:
+                log(f"marked proxy module {module_name} as package")
 
         # create JIT attribute getter
         def module_getattr(name: str):
