@@ -1,0 +1,2 @@
+# debug flag
+DEBUG = False

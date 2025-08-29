@@ -4,9 +4,7 @@ from typing import Dict, Type, Optional, Any, Set
 import rpyc
 
 from .util import log
-
-# global flag for debug logging
-DEBUG_PROXIES = False
+from .debug import DEBUG
 
 # thread lock for proxy creation
 _proxy_creation_lock = threading.Lock()
@@ -39,7 +37,7 @@ class RemoteTypeMapper:
         self.proxy_to_remote[proxy_class] = remote_info
         self.remote_to_proxy[remote_info["fqn"]] = proxy_class
 
-        if DEBUG_PROXIES:
+        if DEBUG:
             log(f"registered proxy: {proxy_class.__name__} -> {remote_info['fqn']}")
 
     def is_netref(self, obj: Any) -> bool:
@@ -120,11 +118,11 @@ class RemoteTypeMapper:
             ):
                 return True
 
-            if DEBUG_PROXIES:
+            if DEBUG:
                 log(f"isinstance failed: {expected_name} vs {remote_type_name}")
 
         except Exception as e:
-            if DEBUG_PROXIES:
+            if DEBUG:
                 log(f"isinstance check error for {proxy_class.__name__}: {e}")
 
         return False
@@ -261,7 +259,7 @@ def is_remote_class(member: Any) -> bool:
         return True
 
     except Exception as e:
-        if DEBUG_PROXIES:
+        if DEBUG:
             log(f"is_remote_class check failed for {member}: {e}")
         return False
 
@@ -302,7 +300,7 @@ def create_proxy_class(
     # register with type mapper
     type_mapper.register_proxy_type(proxy_class, module_name, class_name)
 
-    if DEBUG_PROXIES:
+    if DEBUG:
         log(f"created proxy {class_name} for {module_name}")
 
     return proxy_class
@@ -382,7 +380,7 @@ class RemoteProxyGenerator:
                 # re-raise attribute errors as-is
                 raise
             except Exception as e:
-                if DEBUG_PROXIES:
+                if DEBUG:
                     log(f"module getattr failed for {name}: {e}")
                 # convert to attribute error for cleaner import failures
                 raise AttributeError(
@@ -391,7 +389,7 @@ class RemoteProxyGenerator:
 
         proxy_module.__getattr__ = module_getattr
 
-        if DEBUG_PROXIES:
+        if DEBUG:
             log(f"created proxy module {module_name} with JIT support")
 
         return proxy_module

@@ -4,7 +4,7 @@ from typing import Set, Dict, Optional, Any
 import rpyc
 
 from .util import log
-
+from .debug import DEBUG
 from .proxy_generator import RemoteProxyGenerator, RemoteTypeMapper
 
 
@@ -34,12 +34,14 @@ class RPyCImportBridge:
             raise TypeError(f"Module name must be string, got {type(module_name)}")
 
         self.registered_modules.add(module_name)
-        log(f"registered remote module: {module_name}")
+        if DEBUG:
+            log(f"registered remote module: {module_name}")
 
     def install_import_hooks(self) -> None:
         """Install Python import hooks for registered modules."""
         if self._installed:
-            log("import hooks already installed")
+            if DEBUG:
+                log("import hooks already installed")
             return
 
         if not self.registered_modules:
@@ -55,7 +57,8 @@ class RPyCImportBridge:
         self._ensure_parent_modules()
 
         self._installed = True
-        log(f"installed import hooks for {len(self.registered_modules)} modules")
+        if DEBUG:
+            log(f"installed import hooks for {len(self.registered_modules)} modules")
 
     def uninstall_import_hooks(self) -> None:
         """Remove import hooks from sys.meta_path."""
@@ -68,7 +71,8 @@ class RPyCImportBridge:
             pass  # already removed
 
         self._installed = False
-        log("uninstalled import hooks")
+        if DEBUG:
+            log("uninstalled import hooks")
 
     def _ensure_parent_modules(self) -> None:
         """Create parent module objects in sys.modules if needed."""
@@ -80,7 +84,8 @@ class RPyCImportBridge:
                 parent_module.__path__ = []  # mark as package
                 parent_module.__package__ = module_name
                 sys.modules[module_name] = parent_module
-                log(f"created parent module: {module_name}")
+                if DEBUG:
+                    log(f"created parent module: {module_name}")
 
     def verify_connection(self) -> bool:
         """Verify that the RPyC connection is still active.
@@ -150,7 +155,8 @@ class RemoteImportFinder:
 
             # verify it's module-like
             if not hasattr(remote_module, "__dict__"):
-                log(f"remote object {fullname} is not module-like")
+                if DEBUG:
+                    log(f"remote object {fullname} is not module-like")
                 return None
 
             # create loader for this module
@@ -160,7 +166,8 @@ class RemoteImportFinder:
             return spec
 
         except Exception as e:
-            log(f"import finder failed for {fullname}: {e}")
+            if DEBUG:
+                log(f"import finder failed for {fullname}: {e}")
             return None
 
 
@@ -178,7 +185,8 @@ class RemoteImportLoader(Loader):
 
     def exec_module(self, module):
         """Execute/populate the module with proxy generation."""
-        log(f"generating proxies for {self.fullname}")
+        if DEBUG:
+            log(f"generating proxies for {self.fullname}")
 
         # generate proxy module
         proxy_module = self.bridge.proxy_generator.create_proxy_module(
