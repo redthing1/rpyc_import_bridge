@@ -118,7 +118,7 @@ class RemoteImportFinder:
         """Find module spec for registered remote modules.
 
         Args:
-            fullname: Full module name (e.g., 'mymodule.mediumlevelil')
+            fullname: Full module name (e.g., 'mymodule.submodule')
             path: Module path (unused)
             target: Target module (unused)
 
