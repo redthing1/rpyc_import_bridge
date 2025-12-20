@@ -1,5 +1,4 @@
 import sys
-import threading
 from typing import Set, Dict, Optional, Any
 import rpyc
 
@@ -11,16 +10,30 @@ from .proxy_generator import RemoteProxyGenerator, RemoteTypeMapper
 class RPyCImportBridge:
     """Main orchestrator for RPyC import bridging."""
 
-    def __init__(self, connection: rpyc.Connection):
+    def __init__(
+        self,
+        connection: rpyc.Connection,
+        *,
+        allow_private_attr_fallback: bool = True,
+    ):
         """Initialize the import bridge with an RPyC connection.
 
         Args:
             connection: Active RPyC connection to remote Python instance
+            allow_private_attr_fallback: Store private attrs locally if remote blocks
         """
         self.connection = connection
         self.registered_modules: Set[str] = set()
+        self.allow_private_attr_fallback = allow_private_attr_fallback
         self.type_mapper = RemoteTypeMapper(connection)
-        self.proxy_generator = RemoteProxyGenerator(connection, self.type_mapper)
+        self.proxy_generator = RemoteProxyGenerator(
+            connection,
+            self.type_mapper,
+            allow_private_attr_fallback=allow_private_attr_fallback,
+            module_loader_factory=lambda remote_module, fullname: RemoteImportLoader(
+                self, remote_module, fullname
+            ),
+        )
         self.import_finder: Optional["RemoteImportFinder"] = None
         self._installed = False
 
@@ -103,6 +116,23 @@ class RemoteImportFinder:
     def __init__(self, bridge: RPyCImportBridge):
         self.bridge = bridge
 
+    def _build_spec(self, fullname: str, loader: Loader, is_package: bool):
+        spec = importlib.machinery.ModuleSpec(
+            fullname, loader, is_package=is_package
+        )
+        if is_package:
+            spec.submodule_search_locations = []
+        return spec
+
+    def _is_package(self, remote_module: Any, fullname: str) -> bool:
+        try:
+            return hasattr(remote_module, "__path__")
+        except Exception as e:
+            error_msg = f"unexpected error checking if {fullname} is package: {e}"
+            if DEBUG:
+                log(error_msg)
+            raise ImportError(error_msg) from e
+
     def find_spec(self, fullname: str, path, target=None):
         """Find module spec for registered remote modules.
 
@@ -137,7 +167,8 @@ class RemoteImportFinder:
 
                 # create loader for root module
                 loader = RemoteImportLoader(self.bridge, remote_module, fullname)
-                spec = importlib.machinery.ModuleSpec(fullname, loader)
+                is_package = self._is_package(remote_module, fullname)
+                spec = self._build_spec(fullname, loader, is_package)
                 return spec
 
             except ImportError:
@@ -154,26 +185,35 @@ class RemoteImportFinder:
         if len(parts) < 2:
             return None
 
-        # check if we have import helper - needed for deep imports
-        if not hasattr(self.bridge.connection.root, 'import_module'):
-            error_msg = (
-                f"cannot import submodule {fullname}: "
-                f"server does not expose 'import_module' method. "
-                f"add 'def exposed_import_module(self, module_name): "
-                f"import importlib; return importlib.import_module(module_name)' "
-                f"to your rpyc service"
-            )
-            raise ImportError(error_msg)
-
         try:
+            # check if we have import helper - needed for deep imports
+            try:
+                has_import_module = hasattr(self.bridge.connection.root, "import_module")
+            except Exception as e:
+                error_msg = f"unexpected error checking import helper for {fullname}: {e}"
+                if DEBUG:
+                    log(error_msg)
+                raise ImportError(error_msg) from e
+
+            if not has_import_module:
+                error_msg = (
+                    f"cannot import submodule {fullname}: "
+                    f"server does not expose 'import_module' method. "
+                    f"add 'def exposed_import_module(self, module_name): "
+                    f"import importlib; return importlib.import_module(module_name)' "
+                    f"to your rpyc service"
+                )
+                raise ImportError(error_msg)
+
             # first, try to import the full path on remote side to test if it's a real module
             try:
                 remote_module = self.bridge.connection.root.import_module(fullname)
                 
                 # check if it's actually a module (has __file__ or __path__)
                 is_real_module = (
-                    hasattr(remote_module, "__file__") or 
-                    hasattr(remote_module, "__path__")
+                    hasattr(remote_module, "__file__")
+                    or hasattr(remote_module, "__path__")
+                    or getattr(remote_module, "__spec__", None) is not None
                 )
                 
                 if not is_real_module:
@@ -185,7 +225,8 @@ class RemoteImportFinder:
                 
                 # it's a real module, create a loader for it
                 loader = RemoteImportLoader(self.bridge, remote_module, fullname)
-                spec = importlib.machinery.ModuleSpec(fullname, loader)
+                is_package = self._is_package(remote_module, fullname)
+                spec = self._build_spec(fullname, loader, is_package)
                 return spec
                 
             except ImportError as import_err:
@@ -234,8 +275,21 @@ class RemoteImportLoader(Loader):
             self.remote_module, self.fullname
         )
 
+        # preserve import system metadata before updating
+        original_spec = getattr(module, "__spec__", None)
+        original_loader = getattr(module, "__loader__", None)
+
         # copy attributes to actual module
         module.__dict__.update(proxy_module.__dict__)
 
         # set proper module metadata
-        module.__package__ = self.fullname.rpartition(".")[0]
+        if hasattr(module, "__path__"):
+            module.__package__ = self.fullname
+        else:
+            module.__package__ = self.fullname.rpartition(".")[0]
+
+        # restore import system metadata
+        if original_spec is not None:
+            module.__spec__ = original_spec
+        if original_loader is not None:
+            module.__loader__ = original_loader

@@ -18,6 +18,14 @@ from numpy import array
 from mymodule.things import Function
 ```
 
+Options:
+```py
+bridge = RPyCImportBridge(
+    rpyc_connection,
+    allow_private_attr_fallback=True,
+)
+```
+
 ## testing
 
 ```sh

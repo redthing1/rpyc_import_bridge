@@ -1,6 +1,8 @@
+import importlib
+import sys
 import types
 import threading
-from typing import Dict, Type, Optional, Any, Set
+from typing import Callable, Dict, Type, Optional, Any, Set
 import rpyc
 
 from .util import log
@@ -135,6 +137,14 @@ class RemoteObjectProxy:
     _remote_connection = None
     _remote_class = None
     _type_mapper = None
+    _allow_private_attr_fallback = True
+    _local_attrs = {
+        "_remote_instance",
+        "_remote_connection",
+        "_remote_class",
+        "_type_mapper",
+        "_allow_private_attr_fallback",
+    }
 
     def __init__(self, *args, **kwargs):
         """Create remote instance and store reference."""
@@ -155,13 +165,22 @@ class RemoteObjectProxy:
 
     def __setattr__(self, name, value):
         """Forward attribute setting to remote object."""
-        if name.startswith("_") or name in {"_remote_instance"}:
-            # keep local attributes local
+        if name in self._local_attrs:
+            # keep internal attributes local
             object.__setattr__(self, name, value)
         else:
             # forward to remote
             try:
                 setattr(self._remote_instance, name, value)
+            except AttributeError as e:
+                allow_fallback = getattr(self, "_allow_private_attr_fallback", True)
+                if name.startswith("_") and allow_fallback:
+                    # fallback for rpyc private-attr restrictions
+                    object.__setattr__(self, name, value)
+                    return
+                raise AttributeError(
+                    f"proxy forwarding failed for '{name}': {e}"
+                ) from e
             except Exception as e:
                 raise type(e)(f"proxy forwarding failed for '{name}': {e}") from e
 
@@ -279,12 +298,28 @@ def is_remote_class(member: Any) -> bool:
         return False
 
 
+def is_remote_module(member: Any) -> bool:
+    """Check if a member looks like a module worth proxying."""
+    try:
+        if isinstance(member, types.ModuleType):
+            return True
+        if getattr(member, "__spec__", None) is not None:
+            return True
+        if hasattr(member, "__path__") or hasattr(member, "__file__"):
+            return True
+    except Exception as e:
+        if DEBUG:
+            log(f"is_remote_module check failed for {member}: {e}")
+    return False
+
+
 def create_proxy_class(
     connection: rpyc.Connection,
     remote_class: Any,
     class_name: str,
     module_name: str,
     type_mapper: RemoteTypeMapper,
+    allow_private_attr_fallback: bool,
     base_class: Type = RemoteObjectProxy,
 ) -> Type:
     """Create a local proxy class for a remote class.
@@ -305,6 +340,7 @@ def create_proxy_class(
         "_remote_connection": connection,
         "_remote_class": remote_class,
         "_type_mapper": type_mapper,
+        "_allow_private_attr_fallback": allow_private_attr_fallback,
         "__module__": f"{module_name}.proxies",
         "__qualname__": class_name,
     }
@@ -324,10 +360,63 @@ def create_proxy_class(
 class RemoteProxyGenerator:
     """Generates proxy modules and classes for remote objects."""
 
-    def __init__(self, connection: rpyc.Connection, type_mapper: RemoteTypeMapper):
+    def __init__(
+        self,
+        connection: rpyc.Connection,
+        type_mapper: RemoteTypeMapper,
+        module_loader_factory: Optional[Callable[[Any, str], Any]] = None,
+        allow_private_attr_fallback: bool = True,
+    ):
         self.connection = connection
         self.type_mapper = type_mapper
-        self.proxy_cache: Dict[str, Type] = {}
+        self.proxy_cache: Dict[str, Any] = {}
+        self._module_loader_factory = module_loader_factory
+        self._allow_private_attr_fallback = allow_private_attr_fallback
+
+    def _register_proxy_module(
+        self,
+        remote_module: Any,
+        module_name: str,
+        cache_key: str,
+        parent_module: types.ModuleType,
+        attribute_name: str,
+    ) -> types.ModuleType:
+        existing = sys.modules.get(module_name)
+        if existing is not None:
+            self.proxy_cache[cache_key] = existing
+            setattr(parent_module, attribute_name, existing)
+            return existing
+
+        proxy_module = self.create_proxy_module(remote_module, module_name)
+
+        is_package = False
+        try:
+            is_package = hasattr(remote_module, "__path__")
+        except Exception as e:
+            if DEBUG:
+                log(f"failed checking package status for {module_name}: {e}")
+        if is_package:
+            proxy_module.__package__ = module_name
+        else:
+            proxy_module.__package__ = module_name.rpartition(".")[0]
+
+        loader = None
+        if self._module_loader_factory is not None:
+            loader = self._module_loader_factory(remote_module, module_name)
+
+        spec = importlib.machinery.ModuleSpec(
+            module_name, loader=loader, is_package=is_package
+        )
+        if is_package:
+            spec.submodule_search_locations = []
+        proxy_module.__spec__ = spec
+        if loader is not None:
+            proxy_module.__loader__ = loader
+
+        sys.modules[module_name] = proxy_module
+        self.proxy_cache[cache_key] = proxy_module
+        setattr(parent_module, attribute_name, proxy_module)
+        return proxy_module
 
     def create_proxy_module(
         self, remote_module: Any, module_name: str
@@ -346,7 +435,14 @@ class RemoteProxyGenerator:
         proxy_module.__file__ = f"<proxy for {module_name}>"
         
         # check if remote module is a package (has __path__)
-        if hasattr(remote_module, "__path__"):
+        is_package = False
+        try:
+            is_package = hasattr(remote_module, "__path__")
+        except Exception as e:
+            if DEBUG:
+                log(f"failed checking package status for {module_name}: {e}")
+
+        if is_package:
             # mark proxy module as a package too
             proxy_module.__path__ = []
             if DEBUG:
@@ -368,13 +464,60 @@ class RemoteProxyGenerator:
 
             try:
                 # check if remote module has the attribute
-                if not hasattr(remote_module, name):
+                missing = object()
+                try:
+                    member = getattr(remote_module, name)
+                except AttributeError:
+                    member = missing
+
+                if member is missing:
+                    if is_package:
+                        expected_name = f"{module_name}.{name}"
+                        try:
+                            imported = importlib.import_module(expected_name)
+                            self.proxy_cache[cache_key] = imported
+                            setattr(proxy_module, name, imported)
+                            return imported
+                        except ModuleNotFoundError as e:
+                            if e.name == expected_name:
+                                raise AttributeError(
+                                    f"module '{module_name}' has no attribute '{name}'"
+                                ) from e
+                            raise
                     raise AttributeError(
                         f"module '{module_name}' has no attribute '{name}'"
                     )
 
-                member = getattr(remote_module, name)
+                if is_remote_module(member):
+                    expected_name = f"{module_name}.{name}"
+                    remote_name = None
+                    try:
+                        remote_name = getattr(member, "__name__", None)
+                    except Exception:
+                        remote_name = None
 
+                    try:
+                        imported = importlib.import_module(expected_name)
+                        self.proxy_cache[cache_key] = imported
+                        setattr(proxy_module, name, imported)
+                        return imported
+                    except ModuleNotFoundError as e:
+                        if e.name == expected_name and remote_name == expected_name:
+                            return self._register_proxy_module(
+                                member, expected_name, cache_key, proxy_module, name
+                            )
+                        if e.name == expected_name:
+                            # fall back to returning the original member
+                            self.proxy_cache[cache_key] = member
+                            setattr(proxy_module, name, member)
+                            return member
+                        raise
+                    except ImportError as e:
+                        if remote_name == expected_name:
+                            return self._register_proxy_module(
+                                member, expected_name, cache_key, proxy_module, name
+                            )
+                        raise
                 if is_remote_class(member):
                     # thread-safe proxy creation
                     with _proxy_creation_lock:
@@ -384,7 +527,12 @@ class RemoteProxyGenerator:
 
                         # create proxy class
                         proxy_class = create_proxy_class(
-                            self.connection, member, name, module_name, self.type_mapper
+                            self.connection,
+                            member,
+                            name,
+                            module_name,
+                            self.type_mapper,
+                            self._allow_private_attr_fallback,
                         )
 
                         # cache it

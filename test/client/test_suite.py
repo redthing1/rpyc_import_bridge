@@ -94,6 +94,7 @@ def main():
         assert hasattr(test_package, '__getattr__'), "Package should have __getattr__"
         assert hasattr(test_package, '__path__'), "Package should have __path__"
         assert test_package.__path__ == [], "Package __path__ should be empty list"
+        assert test_package.__package__ == "test_package"
     
     def test_package_level_function():
         from test_package import package_function
@@ -109,10 +110,20 @@ def main():
         from test_package import package_version
         assert package_version == "1.0.0", f"Expected '1.0.0', got {package_version}"
     
+    def test_submodule_attribute_access():
+        import sys
+        import test_package
+        submodule = test_package.submodule
+        assert hasattr(submodule, 'submodule_function')
+        assert sys.modules["test_package.submodule"] is submodule
+        assert submodule.__spec__ is not None
+        assert submodule.__spec__.loader is not None
+
     def test_submodule_import():
         # This is the key test that was failing with binaryninja
         from test_package import submodule
         assert hasattr(submodule, 'submodule_function'), "Submodule should have functions"
+        assert "<proxy for test_package.submodule>" in submodule.__file__
     
     def test_submodule_function():
         from test_package.submodule import submodule_function
@@ -134,6 +145,7 @@ def main():
     test("Import function from package", test_package_level_function)
     test("Import class from package", test_package_level_class)
     test("Import variable from package", test_package_level_variable)
+    test("Attribute access loads submodule", test_submodule_attribute_access)
     test("Import submodule from package", test_submodule_import)
     test("Import function from submodule", test_submodule_function)
     test("Import class from submodule", test_submodule_class)
@@ -190,6 +202,10 @@ def main():
         # read_write property getter works
         initial_value = prop_obj.read_write
         assert isinstance(initial_value, int)  # verify it's accessible
+
+        prop_obj._private = 123
+        if prop_obj.read_write != 123:
+            assert prop_obj.__dict__.get("_private") == 123
     
     def test_special_methods():
         from advanced_classes import SpecialMethodsClass
