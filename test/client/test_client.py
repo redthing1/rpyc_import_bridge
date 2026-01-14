@@ -1,5 +1,5 @@
 import rpyc
-from rpyc_import_bridge import RPyCImportBridge
+from rpyc_import_bridge import ImportBridge
 
 c = rpyc.connect("127.0.0.1", 6070)
 
@@ -7,15 +7,7 @@ print(f"conn root sample_module: {c.root.sample_module}")
 
 # bridge hack
 print("initializing bridge")
-bridge = RPyCImportBridge(c)
-
-# register sample module
-print("registering sample_module")
-bridge.register_remote_module("sample_module")
-# register numpy
-print("registering numpy")
-bridge.register_remote_module("numpy")
-bridge.install_import_hooks()
+bridge = ImportBridge(c, "sample_module", "numpy")
 
 # try importing
 print("importing sample_module")

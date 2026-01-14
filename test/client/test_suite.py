@@ -4,7 +4,7 @@ Test suite for rpyc_import_bridge.
 Keep it simple: run server, run this, see results.
 """
 import rpyc
-from rpyc_import_bridge import RPyCImportBridge
+from rpyc_import_bridge import ImportBridge
 import sys
 import traceback
 
@@ -16,18 +16,18 @@ def test(name, func):
     """Run a test and track results."""
     global tests_passed, tests_failed
     try:
-        print(f"  {name}... ", end="", flush=True)
+        print(f"  {name} ... ", end="", flush=True)
         func()
-        print("✓ PASS")
+        print("ok ✓")
         tests_passed += 1
     except Exception as e:
-        print(f"✗ FAIL: {e}")
+        print(f"fail ✗ ({e})")
         tests_failed += 1
         if "-v" in sys.argv:  # Verbose mode
             traceback.print_exc()
 
 def main():
-    print("=== RPyC Import Bridge Test Suite ===\n")
+    print("RPyC Import Bridge Tests\n")
     
     # Connect to server
     try:
@@ -35,22 +35,14 @@ def main():
         print("✓ Connected to test server")
     except Exception as e:
         print(f"✗ Failed to connect to server: {e}")
-        print("Make sure the server is running: python test/server/test_server.py")
+        print("Run: python test/server/test_server.py")
         return 1
     
-    # Initialize bridge
-    bridge = RPyCImportBridge(c)
-    bridge.register_remote_module("sample_module")
-    bridge.register_remote_module("test_package")
-    bridge.register_remote_module("advanced_classes")
-    bridge.register_remote_module("data_types")
-    bridge.register_remote_module("nested_package")
-    bridge.register_remote_module("numpy")
-    bridge.install_import_hooks()
+    # Initialize bridge (magic defaults)
+    bridge = ImportBridge(c)
     print("✓ Bridge initialized\n")
     
-    # ==========================================
-    print("1. Simple Module Tests (sample_module):")
+    print("Simple modules (sample_module)")
     
     def test_simple_import():
         import sample_module
@@ -86,8 +78,7 @@ def main():
     test("Multiple imports are cached", test_multiple_imports)
     test("Nonexistent attributes raise ImportError", test_nonexistent_attribute)
     
-    # ==========================================
-    print("\n2. Package Tests (test_package):")
+    print("\nPackages (test_package)")
     
     def test_package_import():
         import test_package
@@ -151,8 +142,7 @@ def main():
     test("Import class from submodule", test_submodule_class)
     test("Import constants from submodule", test_submodule_constants)
     
-    # ==========================================
-    print("\n3. Edge Case Tests:")
+    print("\nEdge cases")
     
     def test_repeated_imports():
         import sample_module as sm1
@@ -174,8 +164,7 @@ def main():
     test("Mixed import styles work", test_mixed_import_styles)
     test("Module has correct attributes", test_module_attributes)
     
-    # ==========================================
-    print("\n4. Advanced Class Tests (advanced_classes):")
+    print("\nAdvanced classes (advanced_classes)")
     
     def test_inheritance():
         from advanced_classes import BaseClass, DerivedClass
@@ -223,8 +212,7 @@ def main():
     test("Properties work", test_properties)  
     test("Special methods work", test_special_methods)
     
-    # ==========================================
-    print("\n5. Data Types Tests (data_types):")
+    print("\nData types (data_types)")
     
     def test_basic_data_types():
         from data_types import SIMPLE_LIST, SIMPLE_DICT, SIMPLE_TUPLE
@@ -263,8 +251,7 @@ def main():
     test("Dataclass instances work", test_dataclass)
     test("Data-returning functions work", test_data_functions)
     
-    # ==========================================
-    print("\n6. Nested Package Tests (nested_package):")
+    print("\nNested packages (nested_package)")
     
     def test_nested_imports():
         from nested_package import top_level_func, TOP_LEVEL_VAR
@@ -281,8 +268,7 @@ def main():
     
     test("Deep nested package imports work", test_nested_imports)
     
-    # ==========================================
-    print("\n7. Real-World Package Tests (numpy):")
+    print("\nReal-world packages (numpy)")
     
     def test_numpy_basic():
         import numpy
@@ -308,19 +294,13 @@ def main():
     test("Numpy basic functionality", test_numpy_basic)
     test("Numpy submodule imports", test_numpy_submodules)
     
-    # ==========================================
-    print(f"\n=== Test Results ===")
     total = tests_passed + tests_failed
-    print(f"Tests run: {total}")
-    print(f"Passed: {tests_passed}")
-    print(f"Failed: {tests_failed}")
-    
-    if tests_failed == 0:
-        print("✓ ALL TESTS PASSED!")
-        return 0
-    else:
-        print("✗ SOME TESTS FAILED!")
-        return 1
+    print("\nSummary")
+    print(f"  Tests:  {total}")
+    print(f"  Passed: {tests_passed}")
+    print(f"  Failed: {tests_failed}")
+    print("  Status: ok" if tests_failed == 0 else "  Status: failed")
+    return 0 if tests_failed == 0 else 1
 
 if __name__ == "__main__":
     exit_code = main()

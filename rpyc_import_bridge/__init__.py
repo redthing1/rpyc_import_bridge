@@ -1,3 +1,3 @@
-from .import_bridge import RPyCImportBridge
+from .import_bridge import ImportBridge
 
-__all__ = ["RPyCImportBridge"]
+__all__ = ["ImportBridge"]
